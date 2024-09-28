@@ -1,3 +1,8 @@
+directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # right, left, down, up
+
+# for direction in directions:
+#     new_active = (active[0] + direction[0], active[1] + direction[1])
+#
 class GameState:
     def __init__(self, grid, should_add_moat=True):
         self.grid = grid
@@ -9,14 +14,13 @@ class GameState:
             self.add_moat()
         self.find_nodes(self.grid)
 
-
     def find_nodes(self, grid):
         # Search through the grid, find sources and sinks for each color
         for r in range(len(grid)):
             for c in range(len(grid[0])):
                 if grid[r][c] > 0:  # assuming 0 is an empty space and -1 is a wall
                     color = grid[r][c]
-                    
+
                     self.colors.add(color)
                     if color not in self.sources:
                         self.sources[color] = (r, c)  # first node is the source
@@ -48,16 +52,20 @@ class GameState:
     def get_colors(self):
         # Return the list of colors in the grid (not including the moat color)
         return list(self.colors)
-    
+
     def get_active_colors(self):
         active_colors = set()
         for color in game_state.get_colors():
             source, sink, active = game_state.get_color(color)
+            for direction in directions:
+                new_active = (active[0] + direction[0], active[1] + direction[1])
+                if new_active == sink:
+                    active = sink
             if sink != active:  # if active node is not the sink
                 # this means color has not found its way to the sink
                 active_colors.add(color)
         return active_colors
-    
+
     def cute_print(self):
         matrix = self.grid
         s = [[str(e) for e in row] for row in matrix]
@@ -69,35 +77,41 @@ class GameState:
 
 def is_finished(game_state: GameState):
     # Check if the given game state is complete
-    for color in game_state.get_colors():
-        source, sink, active = game_state.get_color(color)
-        if sink != active:  # if active node is not the sink
-            return False
-    return True
+    if len(game_state.get_active_colors()) <= 0:
+        return True
+    else:
+        return False
+    
 
-#TODO this works but is increadibly inefficient and needs to be made more efficient. 
-def next_game_states(game_state: GameState):
-    # Generate child game states from the current state
-    child_states = []
-    directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # right, left, down, up
 
-    for color in game_state.get_active_colors():
-        source, sink, active = game_state.get_color(color)
+def state_multiplication(game_state, colors):
+    # given a game state and colors will return all possible set of gamestates where each color has moved once.
+    if len(colors) <= 0:
+        # no color to move
+        return [game_state]
+    else:
+        final_states = []
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # right, left, down, up
+        color_copy = colors.copy()
+        curr_color = color_copy.pop()
+        source, sink, active = game_state.get_color(curr_color)
+        children = state_multiplication(game_state, color_copy)
         for direction in directions:
             new_active = (active[0] + direction[0], active[1] + direction[1])
-
             # Check if the move is valid (inside bounds and not colliding with another path or moat)
-            if is_valid_move(new_active, game_state.grid, game_state.active_nodes, color):
+            if is_valid_move(new_active, game_state.grid, game_state.active_nodes, curr_color):
                 # Create a new game state after making this move
-                new_game_state = create_new_game_state(game_state, color, new_active)
-                
-                # Heuristic: prioritize states that bring the active node closer to the sink
-                if distance(new_active, sink) < distance(active, sink):
-                    child_states.insert(0, new_game_state)  # More promising moves at the start
-                else:
-                    child_states.append(new_game_state)
+                passing_state = create_new_game_state(game_state, curr_color, new_active)
+                for partial_final_child_state in children:
+                    if is_valid_move(new_active, partial_final_child_state.grid, partial_final_child_state.active_nodes, curr_color):
+                        final_state = create_new_game_state(partial_final_child_state, curr_color, new_active)
+                        final_states.append(final_state)
+        return final_states
 
-    return child_states
+
+#TODO this works but is increadibly inefficient and needs to be made more efficient.
+def next_game_states(game_state: GameState):
+    return state_multiplication(game_state, game_state.get_active_colors())
 
 
 def is_valid_move(pos, grid, active_nodes, color):
@@ -130,18 +144,20 @@ def can_be_finished(game_state: GameState):
 
 
 from collections import deque
+
+
 def path_exists(start, end, grid):
     if start == end:
         return True
-    
+
     rows, cols = len(grid), len(grid[0])
     directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # right, left, down, up
     visited = set()  # Track visited positions
     queue = deque([start])  # BFS queue initialized with the start node
-    
+
     while queue:
         current = queue.popleft()
-        
+
         if current == end:
             return True  # Path found
 
@@ -162,31 +178,45 @@ def path_exists(start, end, grid):
 
     return False  # No path found
 
+
 def find_solution(game_state: GameState):
-    # Recursively solve the game state
-    print(f"Trying to solve game state with active nodes: {game_state.active_nodes}")
-    
+    # Stack to store game states to process (initially containing the input game state)
+    stack = [game_state]
 
-    if not can_be_finished(game_state):
-        return False
-    elif is_finished(game_state):
-        game_state.cute_print()
-        return True
-    else:
-        for child in next_game_states(game_state):
-            solution = find_solution(child)  # Pass the child state here
-            if solution:
-                return solution
+    while stack:
+        current_state = stack[0]
+        stack = stack[1:]
+        print(f"Trying to solve game state with active nodes: {current_state.active_nodes}")
 
+        # Check if the current state can be finished
+        if not can_be_finished(current_state):
+            continue
+
+        # Check if the current state is a finished solution
+        if is_finished(current_state):
+            current_state.cute_print()  # Print the finished state
+            return True
+
+        # If not finished, add the next possible game states to the stack
+        stack.extend(next_game_states(current_state))
+
+    # Return False if no solution was found after processing all states
     return False
 
 
-def create_new_game_state(game_state: GameState, color, new_active):
+def copy_game_state(game_state: GameState):
     # Create a new game state with the updated active node for the given color
     new_state = GameState([row[:] for row in game_state.grid], False)  # Deep copy the grid
     new_state.sources = game_state.sources.copy()
     new_state.sinks = game_state.sinks.copy()
     new_state.active_nodes = game_state.active_nodes.copy()
+    return new_state
+
+
+def create_new_game_state(game_state: GameState, color, new_active):
+    # Create a new game state with the updated active node for the given color
+    new_state = copy_game_state(game_state)
+
 
     # Update the active node for the specific color
     new_state.active_nodes[color] = new_active
@@ -199,12 +229,18 @@ def create_new_game_state(game_state: GameState, color, new_active):
 
 
 # Sample 5x5 grid with two colors (1 and 2)
+# grid = [
+#     [1, 0, 2, 0, 0],
+#     [0, 3, 0, 3, 0],
+#     [1, 0, 2, 0, 0],
+#     [0, 0, 0, 0, 0],
+#     [0, 0, 0, 0, 0]
+# ]
+
 grid = [
-    [1, 0, 2, 0, 0],
-    [0, 3, 0, 3, 0],
-    [1, 0, 2, 0, 0],
-    [0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0]
+    [1, 0, 2],
+    [0, 0, 0],
+    [1, 0, 2]
 ]
 
 game_state = GameState(grid)
