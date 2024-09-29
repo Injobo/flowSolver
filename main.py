@@ -1,8 +1,12 @@
 directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # right, left, down, up
 
-# for direction in directions:
-#     new_active = (active[0] + direction[0], active[1] + direction[1])
-#
+def get_neighbors(coord):
+    neighbors = []
+    for direction in directions:
+        neighbor = (coord[0] + direction[0], coord[1] + direction[1])
+        neighbors.append(neighbor)
+    return neighbors
+    
 class GameState:
     def __init__(self, grid, should_add_moat=True):
         self.grid = grid
@@ -55,8 +59,9 @@ class GameState:
 
     def get_active_colors(self):
         active_colors = set()
-        for color in game_state.get_colors():
-            source, sink, active = game_state.get_color(color)
+        for color in self.get_colors():
+            source, sink, active = self.get_color(color)
+            get_neighbors(active)
             for direction in directions:
                 new_active = (active[0] + direction[0], active[1] + direction[1])
                 if new_active == sink:
@@ -66,60 +71,100 @@ class GameState:
                 active_colors.add(color)
         return active_colors
 
+    def color_code(self, value):
+        """Return the ANSI escape code for the color based on the value."""
+        # List of ANSI color codes
+        color_map = [
+            "\033[91m",  # Red for negative numbers
+            "\033[0m",   # Default color for zero
+            "\033[32m",  # Green
+            "\033[33m",  # Yellow
+            "\033[34m",  # Blue
+            "\033[35m",  # Magenta
+            "\033[36m",  # Cyan
+            "\033[93m",  # Bright Yellow
+            "\033[94m",  # Bright Blue
+            "\033[95m",  # Bright Magenta
+            "\033[96m",  # Bright Cyan
+            "\033[92m"   # Bright Green for higher numbers
+        ]
+    
+        # Use the value to index into the color_map
+        if value < 0:
+            return color_map[0]  # Red
+        elif value >= 0 and value < len(color_map):
+            return color_map[value + 1]  # Adjust index for zero-based
+        else:
+            return color_map[-1]  # Default to Bright Green for values beyond the defined range
+
     def cute_print(self):
         matrix = self.grid
-        s = [[str(e) for e in row] for row in matrix]
-        lens = [max(map(len, col)) for col in zip(*s)]
-        fmt = '\t'.join('{{:{}}}'.format(x) for x in lens)
-        table = [fmt.format(*row) for row in s]
+        table = []
+        
+        for row in matrix:
+            colored_row = [f"{self.color_code(e)}\u2588\u2588\033[0m" for e in row]  # Block character
+            table.append("".join(colored_row))
+
         print('\n'.join(table))
 
 
 def is_finished(game_state: GameState):
     # Check if the given game state is complete
-    if len(game_state.get_active_colors()) <= 0:
-        return True
-    else:
-        return False
+    # if len(game_state.get_active_colors()) <= 0:
+    #     return True
+    # else:
+    #     return False
     
+    for color in game_state.get_colors():
+        _, sink, active = game_state.get_color(color)
+        if sink != active and (active not in get_neighbors(sink)):  # if active node is not the sink
+            return False
+    return True
 
 
-def state_multiplication(game_state, colors):
-    # given a game state and colors will return all possible set of gamestates where each color has moved once.
-    if len(colors) <= 0:
-        # no color to move
-        return [game_state]
-    else:
-        final_states = []
-        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # right, left, down, up
-        color_copy = colors.copy()
-        curr_color = color_copy.pop()
-        source, sink, active = game_state.get_color(curr_color)
-        children = state_multiplication(game_state, color_copy)
-        for direction in directions:
-            new_active = (active[0] + direction[0], active[1] + direction[1])
-            # Check if the move is valid (inside bounds and not colliding with another path or moat)
-            if is_valid_move(new_active, game_state.grid, game_state.active_nodes, curr_color):
-                # Create a new game state after making this move
-                passing_state = create_new_game_state(game_state, curr_color, new_active)
-                for partial_final_child_state in children:
-                    if is_valid_move(new_active, partial_final_child_state.grid, partial_final_child_state.active_nodes, curr_color):
-                        final_state = create_new_game_state(partial_final_child_state, curr_color, new_active)
-                        final_states.append(final_state)
-        return final_states
+def get_children(game_state, color):
+    # given a game_state and a color return the children of the gamestate where that color has made all possible moves
+    _, _, active = game_state.get_color(color)
+    answer = []
+    for neighbor in get_neighbors(active):
+        if is_valid_move(neighbor, game_state.grid, game_state.active_nodes, color):
+            passing_state = create_new_game_state(game_state, color, neighbor)
+            answer.append(passing_state)
+    return answer
 
-
-#TODO this works but is increadibly inefficient and needs to be made more efficient.
 def next_game_states(game_state: GameState):
-    return state_multiplication(game_state, game_state.get_active_colors())
+    colors = game_state.get_active_colors()
+    draining_stack = [game_state]
+    accumulating_stack = []
+    while len(colors) > 0:
+        curr_color = colors.pop()
+        while draining_stack:
+            curr_state = draining_stack.pop()
+            accumulating_stack.extend(get_children(curr_state, curr_color))
+        if len(colors) > 0:
+            # we popped the last color and dont want to clear out the accumulating_stack
+            draining_stack = accumulating_stack.copy()
+            accumulating_stack = []
+    
+    filtered_final_states = []
+    for final_state in accumulating_stack:
+        if can_be_finished(final_state):
+            if final_state in filtered_final_states:
+                print("error duplicate final_states found, your code is fucked")
+                exit
+            filtered_final_states.append(final_state)
+    return filtered_final_states
+
+
+
 
 
 def is_valid_move(pos, grid, active_nodes, color):
     rows, cols = len(grid), len(grid[0])
     r, c = pos
     if 0 <= r < rows and 0 <= c < cols:  # Check if within bounds
-        # Allow moves into empty spaces or spaces of the same color
-        if grid[r][c] == 0 or grid[r][c] == color:
+        # Allow moves into empty spaces
+        if grid[r][c] == 0:
             # Ensure no other active nodes are occupying the position
             for node_color, node in active_nodes.items():
                 if node == pos and node_color != color:
@@ -179,31 +224,6 @@ def path_exists(start, end, grid):
     return False  # No path found
 
 
-def find_solution(game_state: GameState):
-    # Stack to store game states to process (initially containing the input game state)
-    stack = [game_state]
-
-    while stack:
-        current_state = stack[0]
-        stack = stack[1:]
-        print(f"Trying to solve game state with active nodes: {current_state.active_nodes}")
-
-        # Check if the current state can be finished
-        if not can_be_finished(current_state):
-            continue
-
-        # Check if the current state is a finished solution
-        if is_finished(current_state):
-            current_state.cute_print()  # Print the finished state
-            return True
-
-        # If not finished, add the next possible game states to the stack
-        stack.extend(next_game_states(current_state))
-
-    # Return False if no solution was found after processing all states
-    return False
-
-
 def copy_game_state(game_state: GameState):
     # Create a new game state with the updated active node for the given color
     new_state = GameState([row[:] for row in game_state.grid], False)  # Deep copy the grid
@@ -228,20 +248,90 @@ def create_new_game_state(game_state: GameState, color, new_active):
     return new_state
 
 
-# Sample 5x5 grid with two colors (1 and 2)
+def find_solution(game_state: GameState):
+    # Stack to store game states to process (initially containing the input game state)
+    stack = [game_state]
+    print("solving:")
+    game_state.cute_print()
+
+    i = 0
+    while (stack):
+        i += 1
+        # if (i == 2):
+        #     print("checkpoint")
+
+        current_state = stack[0]
+        if (i % 100 == 0):
+            print(i)
+            current_state.cute_print()
+
+        stack = stack[1:]
+        #print(f"Trying to solve game state with active nodes: {current_state.active_nodes}")
+
+        # Check if the current state can be finished
+        if not can_be_finished(current_state):
+            print("no finish")
+            continue
+
+        # Check if the current state is a finished solution
+        if is_finished(current_state):
+            print("solution is:")
+            current_state.cute_print()  # Print the finished state
+            return True
+
+        # If not finished, add the next possible game states to the stack
+        saved_statess = next_game_states(current_state)
+        # print("children")
+        # for thing in saved_statess:
+        #     thing.cute_print()
+        stack = saved_statess + stack
+
+    # Return False if no solution was found after processing all states
+    return False
+
+# sample 10 x 10 grid
 # grid = [
-#     [1, 0, 2, 0, 0],
-#     [0, 3, 0, 3, 0],
-#     [1, 0, 2, 0, 0],
-#     [0, 0, 0, 0, 0],
-#     [0, 0, 0, 0, 0]
+#     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#     [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+#     [0, 2, 1, 0, 0, 0, 0, 0, 2, 0],
+#     [0, 6, 0, 0, 0, 5, 4, 0, 3, 0],
+#     [0, 0, 0, 0, 0, 7, 0, 0, 0, 0],
+#     [0, 0, 8, 4, 7, 0, 0, 0, 0, 0],
+#     [0, 0, 0, 0, 0, 0, 0, 0, 0, 9],
+#     [0, 5, 0, 6, 0, 0, 0, 0, 0, 3],
+#     [0, 9, 0, 0, 0, 0, 0, 0, 0, 8],
 # ]
 
+# Sample 8x8 grid
 grid = [
-    [1, 0, 2],
-    [0, 0, 0],
-    [1, 0, 2]
+    [1, 0, 0, 1, 2, 0, 0, 0],
+    [0, 0, 3, 4, 5, 0, 5, 0],
+    [0, 0, 6, 0, 0, 0, 0, 0],
+    [0, 0, 7, 0, 8, 9, 0, 0],
+    [0, 0, 0, 0, 4, 0, 0, 0],
+    [0, 0, 0, 3, 0, 0, 0, 0],
+    [0, 6, 0, 7, 0, 0, 8, 2],
+    [0, 0, 0, 0, 0, 0, 0, 9],
 ]
+
+# Sample 5x5 grid with two colors (1 and 2)
+# grid = [
+#     [0, 0, 0, 0, 0, 1],
+#     [0, 0, 0, 0, 0, 0],
+#     [0, 2, 3, 0, 0, 0],
+#     [0, 0, 0, 4, 0, 2],
+#     [0, 4, 0, 1, 3, 5],
+#     [0, 0, 0, 5, 0, 0],
+# ]
+
+# grid = [
+#     [1, 0, 2],
+#     [0, 0, 0],
+#     [1, 0, 2]
+# ]
+
+
 
 game_state = GameState(grid)
 solution = find_solution(game_state)
